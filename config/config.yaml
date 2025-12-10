@@ -1,0 +1,81 @@
+engine:
+  max_threads: 10
+  timeout: 30
+  user_agent: 'RedHawk/1.0 Security Scanner'
+  verbose: true
+
+output:
+  format: 'json'
+  directory: 'reports'
+  timestamp: true
+  auto_report: true
+
+modules:
+  dns:
+    enabled: true
+    timeout: 10
+    check_dnssec: true
+    check_zone_transfer: true
+  
+  subdomain:
+    enabled: true
+    wordlist: 'data/subdomains.txt'
+    use_certificate_transparency: true
+    use_common_names: true
+    max_threads: 50
+  
+  subdomain_wildcard:
+    enabled: true
+    wordlist: 'data/subdomains.txt'
+    use_certificate_transparency: true
+    use_common_names: true
+    max_threads: 50
+    max_subdomains: 100
+  
+  port_scan:
+    enabled: true
+    mode: 'common'  # Options: common, top1000, full
+    timeout: 1
+    max_threads: 100
+  
+  email:
+    enabled: true
+    check_spf: true
+    check_dmarc: true
+    check_dkim: true
+    harvest_emails: true
+    use_hunter_api: true
+    hunter_api_key: '969f706d72ed63e46928c67a0bcdf85dd7d6378e'
+  
+  whois:
+    enabled: true
+    timeout: 10
+  
+  ssl:
+    enabled: true
+    port: 443
+    check_protocols: true
+    check_ciphers: true
+  
+  headers:
+    enabled: true
+    check_security_headers: true
+  
+  waf:
+    enabled: true
+    detection_methods: ['headers', 'response']
+  
+  technology:
+    enabled: true
+    detect_cms: true
+    detect_frameworks: true
+
+security:
+  rate_limit: 10  # requests per second
+  max_retries: 3
+  respect_robots_txt: false
+
+logging:
+  level: 'INFO'  # DEBUG, INFO, WARNING, ERROR
+  file: 'logs/redhawk.log'
+  console: true

@@ -1,0 +1,23 @@
+{
+  "timestamp": "20251210_094952",
+  "base_domain": "pmmc.gov.gh",
+  "target": "*.pmmc.gov.gh",
+  "total_discovered": 3,
+  "subdomains": [
+    "autodiscover.pmmc.gov.gh",
+    "license.pmmc.gov.gh",
+    "www.pmmc.gov.gh"
+  ],
+  "discovery_methods": {
+    "certificate_transparency": 11,
+    "dns_enum": 0,
+    "wordlist": 2,
+    "common": 2,
+    "search_engines": 0
+  },
+  "statistics": {
+    "total_found": 3,
+    "scan_time": 8.18,
+    "methods_used": 5
+  }
+}

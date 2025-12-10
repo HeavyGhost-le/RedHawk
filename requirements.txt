@@ -1,0 +1,8 @@
+dnspython>=2.3.0
+requests>=2.31.0
+PyYAML>=6.0
+pyOpenSSL>=23.0.0
+beautifulsoup4>=4.12.0
+pyfiglet>=0.8.0
+colorama>=0.4.6
+python-whois>=0.8.0
