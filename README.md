@@ -454,6 +454,9 @@ sudo apt-get install python3-tk
 redhawk target.com --verbose
 ```
 
+<img width="993" height="966" alt="image" src="https://github.com/user-attachments/assets/15b5501e-316b-42c2-9f9d-4099baf7696e" />
+
+
 ---
 
 ## ⚖️ Legal Disclaimer
