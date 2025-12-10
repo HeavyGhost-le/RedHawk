@@ -21,7 +21,7 @@ class Scanner:
         self.name = "Email Scanner"
         self.description = "Email security analysis and address harvesting with Hunter.io integration"
         # Hunter.io API key (can be overridden in config)
-        self.hunter_api_key = "969f706d72ed63e46928c67a0bcdf85dd7d6378e"
+        self.hunter_api_key = "96xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     
     def scan(self, target: str, config: Dict) -> Dict:
         """Main scan function"""
