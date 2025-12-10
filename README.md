@@ -6,6 +6,8 @@
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 **RedHawk** is a powerful, modular security reconnaissance and vulnerability assessment framework designed for professional penetration testers and security researchers. Built with Python, it provides comprehensive scanning capabilities with an intuitive GUI and advanced automation features.
+<img width="1211" height="837" alt="image" src="https://github.com/user-attachments/assets/c2499234-5d62-4593-b744-4cdf6680e446" />
+
 
 ---
 
