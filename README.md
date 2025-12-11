@@ -109,7 +109,7 @@ redhawk --gui
 
 ```bash
 # Discover all subdomains
-python3 scan.py --wildcard gov.gh
+python3 scan.py --wildcard example.com
 
 # Result: Hundreds of subdomains in minutes
 ```
@@ -140,7 +140,7 @@ python3 scan.py target.com --verbose
 ### GUI Workflow
 
 1. **Launch**: `redhawk --gui`
-2. **Enter target**: `gov.gh`
+2. **Enter target**: `example.com`
 3. **Select**: ☑ Wildcard Scan (*)
 4. **Click**: Scan All
 5. **Wait**: Discovery completes (~5 min)
@@ -196,7 +196,7 @@ python3 scan.py target.com --verbose
 
 ```
 Step 1: Discover
-Target: gov.gh
+Target: example.com
 ☑ Wildcard Scan
 → Result: 606 subdomains (5 min)
 
@@ -247,16 +247,16 @@ Files created:
 
 ```
 CRITICAL (18):
-- parliament.gov.gh
-- mfa.gov.gh
-- defense.gov.gh
-- presidency.gov.gh
+- parliament.example.com
+- mfa.example.com
+- defense.example.com
+- presidency.example.com
 
 HIGH (57):
-- finance.gov.gh
-- police.gov.gh
-- immigration.gov.gh
-- gra.gov.gh
+- finance.example.com
+- police.example.com
+- immigration.example.com
+- gra.example.com
 
 MEDIUM (150):
 - ministries
@@ -310,7 +310,7 @@ modules:
 
 ```bash
 # Discover all subdomains
-redhawk --wildcard gov.gh
+redhawk --wildcard example.com
 
 # Result: 606 subdomains in 5 minutes
 
@@ -329,11 +329,11 @@ redhawk --list top10_gov_gh_20251210.txt
 ```bash
 # Create target list
 cat > targets.txt << EOF
-parliament.gov.gh
-mofep.gov.gh
-police.gov.gh
-gra.gov.gh
-mfa.gov.gh
+parliament.example.com
+mofep.example.com
+police.example.com
+gra.example.com
+mfa.example.com
 EOF
 
 # Scan all
@@ -553,7 +553,3 @@ Modules: modules/
 **🦅 RedHawk - Hunt Smarter, Not Harder**
 
 *Professional Security Assessment Made Easy*
-
----
-
-*Version 1.0 | Last Updated: December 10, 2025*
