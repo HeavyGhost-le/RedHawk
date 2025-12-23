@@ -1,13 +1,13 @@
 # 🦅 RedHawk - Advanced Security Assessment Framework
 
 ![Version](https://img.shields.io/badge/version-1.0-blue)
-![Python](https://img.shields.io/badge/python-3.8+-green)
+![Python](https://img.shields.io/badge/python-3.11-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 **RedHawk** is a powerful, modular security reconnaissance and vulnerability assessment framework designed for professional penetration testers and security researchers. Built with Python, it provides comprehensive scanning capabilities with an intuitive GUI and advanced automation features.
-<img width="1211" height="837" alt="image" src="https://github.com/user-attachments/assets/c2499234-5d62-4593-b744-4cdf6680e446" />
 
+<img width="1211" height="837" alt="image" src="https://github.com/user-attachments/assets/c2499234-5d62-4593-b744-4cdf6680e446" />
 
 ---
 
@@ -53,7 +53,7 @@
 ### Prerequisites
 
 ```bash
-# Python 3.8 or higher
+# Python 3.11 or higher
 python3 --version
 
 # Git
@@ -64,11 +64,11 @@ git --version
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/RedHawk.git
+git clone https://github.com/HeavyGhost-le/RedHawk.git
 cd RedHawk
 
 # Install dependencies
-pip3 install -r requirements.txt --break-system-packages
+pip3 install -r requirements.txt
 
 # Set up alias (optional)
 echo "alias redhawk='python3 $(pwd)/scan.py'" >> ~/.bashrc
@@ -78,8 +78,8 @@ source ~/.bashrc
 ### Required Packages
 
 ```bash
-pip3 install dnspython requests pyyaml beautifulsoup4 --break-system-packages
-pip3 install pyOpenSSL --break-system-packages
+pip3 install dnspython requests pyyaml beautifulsoup4
+pip3 install pyOpenSSL
 ```
 
 ---
@@ -227,6 +227,7 @@ redhawk --wildcard example.com
 ```
 
 **Output:**
+
 ```
 [+] Certificate Transparency: 342 subdomains
 [+] DNS Enumeration: 156 subdomains
@@ -281,11 +282,19 @@ Savings: ~19 hours! ⚡
 
 Edit `config/config.yaml`:
 ```yaml
+engine:
+  max_threads: 10
+  timeout: 30
+
 modules:
   email:
     enabled: true
     use_hunter_api: true
     hunter_api_key: 'your-api-key-here'
+
+output:
+  directory: 'reports'
+  timestamp: true
 ```
 
 **Results:**
@@ -295,7 +304,7 @@ modules:
 
 **Metadata includes:**
 - Full names
-- Job positions  
+- Job positions
 - Departments
 - Seniority levels
 - LinkedIn profiles
@@ -429,12 +438,12 @@ RedHawk/
 
 **1. Module Import Errors**
 ```bash
-pip3 install dnspython pyyaml --break-system-packages
+pip3 install dnspython pyyaml
 ```
 
 **2. Permission Errors**
 ```bash
-pip3 install --break-system-packages
+pip3 install --user -r requirements.txt
 ```
 
 **3. GUI Not Launching**
@@ -455,7 +464,6 @@ redhawk target.com --verbose
 ```
 
 <img width="993" height="966" alt="image" src="https://github.com/user-attachments/assets/15b5501e-316b-42c2-9f9d-4099baf7696e" />
-
 
 ---
 
