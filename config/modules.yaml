@@ -1,0 +1,43 @@
+# Module Configuration
+
+modules:
+  # Core modules
+  dns:
+    enabled: true
+    timeout: 10
+  
+  ssl:
+    enabled: true
+    check_certificate: true
+  
+  # New v2.0 modules
+  api_scanner:
+    enabled: false
+    check_swagger: true
+    check_graphql: true
+  
+  cloud_security:
+    enabled: false
+    check_s3: true
+    check_azure: true
+    check_gcs: true
+  
+  js_analyzer:
+    enabled: false
+    extract_secrets: true
+    extract_endpoints: true
+  
+  content_discovery:
+    enabled: false
+    wordlist_size: medium
+  
+  osint:
+    enabled: false
+    github_token: ''
+    hunter_api_key: ''
+  
+  compliance:
+    enabled: false
+    standards:
+      - owasp
+      - gdpr
