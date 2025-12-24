@@ -184,15 +184,40 @@ class RedHawkGUI:
         try:
             if self.engine is None:
                 return []
-            # Preferred API
+            # Preferred API: get_available_modules may return list or dict
             if hasattr(self.engine, 'get_available_modules'):
-                return list(self.engine.get_available_modules())
+                available = self.engine.get_available_modules()
+                # New Engine may return a mapping of module_name -> metadata or an async result
+                # Normalize common types, also handle futures
+                if isinstance(available, concurrent.futures.Future):
+                    try:
+                        available = available.result()
+                    except Exception:
+                        available = []
+                if isinstance(available, dict):
+                    return list(available.keys())
+                if isinstance(available, (list, tuple, set)):
+                    return list(available)
             # older semantic: _tasks registry
             if hasattr(self.engine, '_tasks'):
-                return list(self.engine._tasks.keys())
-            # discover_modules
+                if isinstance(self.engine._tasks, dict):
+                    return list(self.engine._tasks.keys())
+                try:
+                    return list(self.engine._tasks)
+                except Exception:
+                    pass
+            # discover_modules may also return list or dict
             if hasattr(self.engine, 'discover_modules'):
-                return list(self.engine.discover_modules())
+                discovered = self.engine.discover_modules()
+                if isinstance(discovered, concurrent.futures.Future):
+                    try:
+                        discovered = discovered.result()
+                    except Exception:
+                        discovered = []
+                if isinstance(discovered, dict):
+                    return list(discovered.keys())
+                if isinstance(discovered, (list, tuple, set)):
+                    return list(discovered)
         except Exception:
             traceback.print_exc()
         return []
@@ -432,54 +457,118 @@ class RedHawkGUI:
                 if self.engine is None:
                     raise RuntimeError("Engine not available")
 
-                # If engine supports run_all_modules
+                # Try multiple engine API styles
+                results_raw = None
+                if self.engine is None:
+                    raise RuntimeError("Engine not available")
+
+                # Preferred: run_all_modules(target=...) or run_all_modules()
                 if hasattr(self.engine, 'run_all_modules'):
                     try:
-                        results = self.engine.run_all_modules(target, callback=self._scan_callback)
-                    except TypeError:
-                        results = self.engine.run_all_modules(target)
-                # If engine supports run_modules (list of modules)
-                elif hasattr(self.engine, 'run_modules'):
+                        # call with named arg if supported
+                        try:
+                            results_raw = self.engine.run_all_modules(target=target, parallel=False)
+                        except TypeError:
+                            # fallback to positional call if engine expects different signature
+                            results_raw = self.engine.run_all_modules(target)
+                    except Exception:
+                        traceback.print_exc()
+                        results_raw = None
+
+                # Next: run_modules(module_names=..., target=...)
+                if results_raw is None and hasattr(self.engine, 'run_modules'):
                     enabled = [m for m, v in self.module_vars.items() if v.get()]
                     try:
-                        results = self.engine.run_modules(enabled, target, callback=self._scan_callback)
-                    except TypeError:
-                        # try different arg order
+                        # try typical keyword style
                         try:
-                            results = self.engine.run_modules(enabled, target)
-                        except Exception:
-                            # try (target, modules)
-                            results = self.engine.run_modules(target, enabled)
-                # If engine is a task registry (run_task / submit_task)
-                elif hasattr(self.engine, 'run_task') or hasattr(self.engine, 'submit_task'):
+                            results_raw = self.engine.run_modules(enabled, target=target, parallel=False)
+                        except TypeError:
+                            # try other common signatures
+                            try:
+                                results_raw = self.engine.run_modules(enabled, target)
+                            except Exception:
+                                results_raw = self.engine.run_modules(target, enabled)
+                    except Exception:
+                        traceback.print_exc()
+                        results_raw = None
+
+                # If engine exposes run_module / run_task or submit_task, call modules individually
+                if results_raw is None:
                     enabled = [m for m, v in self.module_vars.items() if v.get()]
+                    results_raw = []
                     for m in enabled:
-                        try:
-                            if hasattr(self.engine, 'run_task'):
-                                r = self.engine.run_task(m, target)
-                                results[m] = {'status': 'success', 'result': r}
+                        if hasattr(self.engine, 'run_module'):
+                            try:
+                                # prefer keyword target if supported
+                                try:
+                                    r = self.engine.run_module(m, target=target)
+                                except TypeError:
+                                    r = self.engine.run_module(m, target)
+                            except Exception:
+                                traceback.print_exc()
+                                r = {'name': m, 'status': 'error', 'result': None, 'error': 'run_module failure'}
+                        elif hasattr(self.engine, 'run_task') or hasattr(self.engine, 'submit_task'):
+                            try:
+                                if hasattr(self.engine, 'run_task'):
+                                    r = self.engine.run_task(m, target)
+                                else:
+                                    fut = self.engine.submit_task(m, target)
+                                    r = fut.result()
+                            except Exception:
+                                traceback.print_exc()
+                                r = {'name': m, 'status': 'error', 'result': None, 'error': 'task failure'}
+                        else:
+                            r = {'name': m, 'status': 'error', 'result': None, 'error': 'No runnable engine API found'}
+                        # ensure each item has a name for later normalization
+                        if isinstance(r, dict) and 'name' not in r:
+                            r['name'] = m
+                        results_raw.append(r)
+
+                # Normalize results_raw into a mapping {module_name: result_dict}
+                def _normalize_results(raw):
+                    if raw is None:
+                        return {}
+                    # Already a mapping
+                    if isinstance(raw, dict):
+                        # if dict seems to be {module: result} keep it
+                        # but also accept dicts that are result objects without module names
+                        # detect by checking nested elements
+                        first_vals = list(raw.values())[:1]
+                        if first_vals and isinstance(first_vals[0], dict) and ('status' in first_vals[0] or 'result' in first_vals[0]):
+                            return raw
+                        # otherwise treat as a single unnamed result
+                        name = raw.get('name') or raw.get('module') or 'result'
+                        return {name: raw}
+                    # list of results
+                    if isinstance(raw, (list, tuple)):
+                        out = {}
+                        for item in raw:
+                            if isinstance(item, dict):
+                                name = item.get('name') or item.get('module') or item.get('module_name')
+                                if not name:
+                                    # fallback: try to use summary or string index
+                                    name = item.get('summary') or f"module_{len(out)}"
+                                out[name] = item
                             else:
-                                fut = self.engine.submit_task(m, target)
-                                r = fut.result()
-                                results[m] = {'status': 'success', 'result': r}
-                        except Exception as e:
-                            results[m] = {'status': 'error', 'result': str(e)}
-                else:
-                    # As a last resort try engine.main() or engine.run()
-                    if hasattr(self.engine, 'main'):
+                                # non-dict item: convert to string key
+                                key = f"module_{len(out)}"
+                                out[key] = {'name': key, 'status': 'success', 'result': item}
+                        return out
+                    # otherwise wrap scalar result
+                    return {'result': {'status': 'success', 'result': raw}}
+                results = _normalize_results(results_raw)
+
+                # If engine didn't call the GUI callback, call it now for each module
+                try:
+                    # detect whether engine accepted callback param by seeing if callback was called;
+                    # we don't have a direct hook, so always call GUI callback for normalized results to keep UI updated.
+                    for mod_name, res in results.items():
                         try:
-                            self.engine.main()
-                            results = {'status': 'success'}
-                        except Exception as e:
-                            results = {'status': 'error', 'error': str(e)}
-                    elif hasattr(self.engine, 'run'):
-                        try:
-                            self.engine.run()
-                            results = {'status': 'success'}
-                        except Exception as e:
-                            results = {'status': 'error', 'error': str(e)}
-                    else:
-                        results = {'error': 'No runnable engine API found'}
+                            self._scan_callback(mod_name, res)
+                        except Exception:
+                            traceback.print_exc()
+                except Exception:
+                    traceback.print_exc()
 
             self.current_results = results
             self.root.after(0, self._scan_complete, results)
@@ -499,18 +588,70 @@ class RedHawkGUI:
 
         # Run subdomain discovery using wildcard module
         try:
+            # prefer run_module signature; handle engines that use different return shapes
             if hasattr(self.engine, 'run_module'):
                 try:
-                    subdomain_results = self.engine.run_module('subdomain_wildcard', target, callback=self._scan_callback)
+                    subdomain_results_raw = self.engine.run_module('subdomain_wildcard', target=target)
                 except TypeError:
-                    subdomain_results = self.engine.run_module('subdomain_wildcard', target)
+                    subdomain_results_raw = self.engine.run_module('subdomain_wildcard', target)
             elif hasattr(self.engine, 'run_modules'):
-                res = self.engine.run_modules(['subdomain_wildcard'], target, callback=self._scan_callback)
-                subdomain_results = res.get('subdomain_wildcard', {})
+                # request only that module
+                try:
+                    sub_res = self.engine.run_modules(['subdomain_wildcard'], target=target)
+                    # engine.run_modules may return dict mapping or list
+                    if isinstance(sub_res, dict):
+                        # normalize dict mapping where keys could be futures or metadata
+                        if 'subdomain_wildcard' in sub_res:
+                            subdomain_results_raw = sub_res.get('subdomain_wildcard', {})
+                        else:
+                            # maybe mapping of module->future/metadata
+                            # extract the first dict-like value
+                            first_val = list(sub_res.values())[0] if sub_res else {}
+                            if isinstance(first_val, concurrent.futures.Future):
+                                try:
+                                    first_val = first_val.result()
+                                except Exception:
+                                    first_val = {}
+                            subdomain_results_raw = first_val
+                    elif isinstance(sub_res, (list, tuple)):
+                        # try to extract the single item
+                        subdomain_results_raw = sub_res[0] if sub_res else {}
+                    else:
+                        subdomain_results_raw = sub_res
+                except Exception:
+                    subdomain_results_raw = {}
             else:
-                subdomain_results = {'status': 'error', 'subdomains': []}
+                subdomain_results_raw = {'status': 'error', 'subdomains': []}
         except Exception as e:
-            subdomain_results = {'status': 'error', 'subdomains': [], 'error': str(e)}
+            subdomain_results_raw = {'status': 'error', 'subdomains': [], 'error': str(e)}
+
+        # normalize into dict with keys like 'status' and 'subdomains'
+        # Handle async/future returns
+        if isinstance(subdomain_results_raw, concurrent.futures.Future):
+            try:
+                subdomain_results_raw = subdomain_results_raw.result()
+            except Exception:
+                subdomain_results_raw = {}
+
+        if isinstance(subdomain_results_raw, dict) and 'subdomains' in subdomain_results_raw:
+            subdomain_results = subdomain_results_raw
+        elif isinstance(subdomain_results_raw, dict) and 'result' in subdomain_results_raw:
+            # the engine may return {'status': 'success', 'result': {...}}
+            if isinstance(subdomain_results_raw['result'], dict):
+                res = subdomain_results_raw['result']
+                if 'subdomains' in res:
+                    subdomain_results = res
+                else:
+                    subdomain_results = {'subdomains': res}
+            elif isinstance(subdomain_results_raw['result'], (list, tuple)):
+                subdomain_results = {'subdomains': list(subdomain_results_raw['result']), 'status': subdomain_results_raw.get('status', 'success')}
+            else:
+                subdomain_results = {'subdomains': [subdomain_results_raw['result']]}
+        elif isinstance(subdomain_results_raw, (list, tuple)):
+            # engine may return list of subdomains directly
+            subdomain_results = {'subdomains': list(subdomain_results_raw), 'status': 'success'}
+        else:
+            subdomain_results = {}
 
         if subdomain_results.get('status') != 'success':
             return subdomain_results
