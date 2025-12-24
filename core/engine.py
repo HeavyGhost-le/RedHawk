@@ -1,238 +1,198 @@
 """
-RedHawk Engine implementation
+Core engine utilities for RedHawk.
 
-This module provides the Engine class which manages task registration and
-execution using a thread pool. It is written to be a backwards compatible
-replacement for the previously-removed implementation. An alias
-`RedHawkEngine = Engine` is provided for compatibility.
+This module adds richer class instantiation heuristics (so Scanner/Module classes
+that accept combinations of target, engine, config are supported) and better
+asyncio support: run_module will await coroutine results when possible and
+provides an async variant for use from async code.
 
-Features:
-- register/unregister tasks by name
-- synchronous or asynchronous execution of registered tasks
-- lifecycle management (start / stop / restart)
-- simple status reporting
-- context-manager support
-- factory from configuration mapping
-
-The implementation aims to be stable and dependency-light (uses stdlib only).
+Commit message: feat(core): support async module entrypoints and richer instantiation for Scanner/Module
 """
+
 from __future__ import annotations
 
-import logging
-import threading
-import time
-from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, Mapping, Optional
-
-__all__ = ["Engine", "RedHawkEngine"]
-
-DEFAULT_WORKERS = 4
-DEFAULT_NAME = "RedHawkEngine"
-_DEFAULT_SHUTDOWN_WAIT = 5.0
+import asyncio
+import inspect
+from typing import Any, Callable, Optional
 
 
 class Engine:
-    """Core engine for RedHawk.
+    """Lightweight engine helper used to instantiate/execute modules/scanners.
 
-    The Engine manages a pool of worker threads and a registry of named
-    callable tasks. Tasks may be executed synchronously via run_task or
-    submitted for asynchronous execution via submit_task.
-
-    Example:
-        engine = Engine()
-        engine.register_task("hello", lambda name: print(f"hello {name}"))
-        engine.run_task("hello", "world")
-
-    The class is intentionally small and stable so it can be used as a
-    dependable building block for tooling and CLI code.
+    Key features added here:
+    - instantiate_component: will try to construct a class by matching constructor
+      parameter names (target, engine, config) and will fall back to positional
+      attempts before finally calling the no-arg constructor.
+    - run_module / run_module_async: will call a module's entrypoint (run/main or
+      the object itself). If the result is awaitable, run_module will synchronously
+      run it to completion (using asyncio.run) when called from sync code; when
+      called from an already-running event loop it will schedule and return a
+      Task. Prefer run_module_async from async callers to always receive the
+      awaited final result.
     """
 
-    version = "1.0.0"
+    def __init__(self, config: Optional[dict] = None) -> None:
+        self.config = config or {}
 
-    def __init__(
+    def instantiate_component(
         self,
-        name: str = DEFAULT_NAME,
-        max_workers: int = DEFAULT_WORKERS,
-        logger: Optional[logging.Logger] = None,
-    ) -> None:
-        self.name = name
-        self.max_workers = max(1, int(max_workers))
-        self._logger = logger or logging.getLogger(self.__class__.__name__)
-        self._tasks: Dict[str, Callable[..., Any]] = {}
-        self._executor: Optional[ThreadPoolExecutor] = None
-        self._executor_lock = threading.RLock()
-        self._running = False
-        self._start_time: Optional[float] = None
+        component: Any,
+        *,
+        target: Any = None,
+        engine: "Engine" | None = None,
+        config: Optional[dict] = None,
+    ) -> Any:
+        """Instantiate a class or return the object as-is.
 
-        # Ensure logger has at least a NullHandler to avoid noisy output
-        if not self._logger.handlers:
-            self._logger.addHandler(logging.NullHandler())
+        If `component` is a class, we try to call its constructor by matching
+        parameter names. Supported parameter names that are automatically
+        provided are: 'target', 'engine', 'config'. If matching by name fails,
+        a few positional fallbacks are attempted.
 
-    # --- lifecycle ---
-    def _ensure_executor(self) -> None:
-        with self._executor_lock:
-            if self._executor is None:
-                self._logger.debug("Creating ThreadPoolExecutor (%d workers)", self.max_workers)
-                self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
-
-    def start(self) -> None:
-        """Start the engine. Subsequent task submissions will run."""
-        with self._executor_lock:
-            if self._running:
-                self._logger.debug("Engine already running")
-                return
-            self._ensure_executor()
-            self._running = True
-            self._start_time = time.time()
-            self._logger.info("%s started with %d worker(s)", self.name, self.max_workers)
-
-    def stop(self, wait: bool = True, timeout: Optional[float] = _DEFAULT_SHUTDOWN_WAIT) -> None:
-        """Stop the engine and shutdown the worker pool.
-
-        Args:
-            wait: whether to wait for currently submitted tasks to finish.
-            timeout: maximum number of seconds to wait for shutdown if wait is True.
+        If component is already an instance (not a class), it is returned
+        unchanged.
         """
-        with self._executor_lock:
-            if not self._running and self._executor is None:
-                self._logger.debug("Engine not running")
-                return
+        if not inspect.isclass(component):
+            return component
 
-            self._running = False
-            exec_ref = self._executor
-            self._executor = None
+        cls = component
+        provided_config = config if config is not None else self.config
 
-        if exec_ref is not None:
-            self._logger.info("Shutting down executor (wait=%s, timeout=%s)", wait, timeout)
-            exec_ref.shutdown(wait=wait, timeout=timeout if wait else None)
-            self._logger.info("Executor shut down")
-
-        self._start_time = None
-
-    def restart(self) -> None:
-        """Restart the engine: stop then start again."""
-        self._logger.debug("Restarting engine")
-        self.stop()
-        self.start()
-
-    # --- task registry ---
-    def register_task(self, name: str, func: Callable[..., Any]) -> None:
-        """Register a callable as a named task.
-
-        A ValueError is raised if the name is already registered.
-        """
-        if not callable(func):
-            raise TypeError("func must be callable")
-        if name in self._tasks:
-            raise ValueError(f"Task '{name}' is already registered")
-        self._tasks[name] = func
-        self._logger.debug("Registered task '%s'", name)
-
-    def unregister_task(self, name: str) -> None:
-        """Unregister a previously-registered task.
-
-        If the task is not registered this is a no-op.
-        """
-        if name in self._tasks:
-            del self._tasks[name]
-            self._logger.debug("Unregistered task '%s'", name)
-
-    def get_task(self, name: str) -> Optional[Callable[..., Any]]:
-        """Return the callable registered for name or None if missing."""
-        return self._tasks.get(name)
-
-    # --- execution ---
-    def submit_task(self, name: str, *args: Any, **kwargs: Any) -> Future:
-        """Submit a registered task for asynchronous execution.
-
-        Raises KeyError if the task name is unknown.
-        """
-        func = self._tasks.get(name)
-        if func is None:
-            raise KeyError(f"Unknown task '{name}'")
-
-        # Ensure we have an executor
-        self._ensure_executor()
-        if self._executor is None:
-            # Shouldn't happen, _ensure_executor ensures an executor is set
-            raise RuntimeError("Executor unavailable")
-
-        self.start()
-        self._logger.debug("Submitting task '%s' to executor", name)
-        return self._executor.submit(self._run_safe, func, *args, **kwargs)
-
-    def run_task(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        """Run a registered task synchronously and return its result.
-
-        This convenience method will execute the task in the calling thread.
-        Raises KeyError if the task name is unknown.
-        """
-        func = self._tasks.get(name)
-        if func is None:
-            raise KeyError(f"Unknown task '{name}'")
-        self._logger.debug("Running task '%s' synchronously", name)
-        return self._run_safe(func, *args, **kwargs)
-
-    def _run_safe(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Execute func(*args, **kwargs) capturing/logging exceptions."""
+        # Inspect __init__ parameters (skip 'self')
         try:
-            return func(*args, **kwargs)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            self._logger.exception("Task raised an exception: %s", exc)
-            raise
+            sig = inspect.signature(cls.__init__)
+            params = [p.name for p in list(sig.parameters.values())[1:]]
+        except (ValueError, TypeError):
+            # If we can't get a signature, fall back to naive instantiation
+            try:
+                return cls()
+            except Exception:
+                raise
 
-    # --- configuration and factories ---
-    def configure(self, *, max_workers: Optional[int] = None, name: Optional[str] = None) -> None:
-        """Dynamically update engine configuration.
+        # Try to instantiate by name-matching kwargs first
+        kwargs = {}
+        if "target" in params and target is not None:
+            kwargs["target"] = target
+        if "engine" in params and engine is not None:
+            kwargs["engine"] = engine
+        if "config" in params and provided_config is not None:
+            kwargs["config"] = provided_config
 
-        Note: changing max_workers will take effect when the engine is
-        restarted.
+        if kwargs:
+            try:
+                return cls(**kwargs)
+            except TypeError:
+                # Fall through to positional attempts
+                pass
+
+        # Positional fallback attempts. Build arg lists in commonly-used orders.
+        candidates = []
+
+        # Common orders: (target,), (target, engine), (target, engine, config),
+        # (engine,), (config,)
+        if "target" in params and target is not None:
+            candidates.append((target,))
+            if "engine" in params and engine is not None:
+                candidates.append((target, engine))
+                if "config" in params and provided_config is not None:
+                    candidates.append((target, engine, provided_config))
+        if "engine" in params and engine is not None:
+            candidates.append((engine,))
+        if "config" in params and provided_config is not None:
+            candidates.append((provided_config,))
+
+        for args in candidates:
+            try:
+                return cls(*args)
+            except TypeError:
+                continue
+
+        # Last resort: no-arg constructor
+        try:
+            return cls()
+        except Exception as exc:
+            raise TypeError(
+                f"Unable to instantiate {cls!r} with target/engine/config heuristics: {exc}"
+            )
+
+    async def run_module_async(self, module_or_class: Any, *args, target: Any = None, **kwargs) -> Any:
+        """Asynchronously run a module entrypoint and return its final result.
+
+        This will instantiate `module_or_class` if it is a class (using
+        instantiate_component) and then try to call a sensible entrypoint:
+        - instance.run(...)
+        - instance.main(...)
+        - instance(...) if the instance itself is callable
+
+        If the called entrypoint returns an awaitable, it is awaited and the
+        resolved value is returned.
         """
-        if max_workers is not None:
-            self.max_workers = max(1, int(max_workers))
-            self._logger.debug("Configured max_workers=%d", self.max_workers)
-        if name:
-            self.name = name
-            self._logger.debug("Configured name=%s", self.name)
+        inst = self.instantiate_component(module_or_class, target=target, engine=self, config=self.config)
 
-    @classmethod
-    def from_config(cls, cfg: Mapping[str, Any]) -> "Engine":
-        """Construct an Engine from a mapping-like config.
+        entry = None
+        if hasattr(inst, "run") and callable(getattr(inst, "run")):
+            entry = getattr(inst, "run")
+        elif hasattr(inst, "main") and callable(getattr(inst, "main")):
+            entry = getattr(inst, "main")
+        elif callable(inst):
+            entry = inst
 
-        Recognized keys: name, max_workers.
+        if entry is None:
+            raise ValueError("Module/Scanner has no callable entrypoint (run/main/callable)")
+
+        result = entry(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    def run_module(self, module_or_class: Any, *args, target: Any = None, **kwargs) -> Any:
+        """Run a module entrypoint from synchronous code.
+
+        Behavior for coroutine results:
+        - If there is no running event loop, asyncio.run(...) is used to run the
+          coroutine to completion and the final result is returned.
+        - If there is a running event loop (we're inside async code), a Task is
+          scheduled and returned. In that case callers should await the returned
+          Task to obtain the final result. Prefer using run_module_async from
+          async callsites to always receive the awaited result instead of a Task.
         """
-        name = cfg.get("name", DEFAULT_NAME)
-        max_workers = cfg.get("max_workers", DEFAULT_WORKERS)
-        logger = cfg.get("logger")
-        return cls(name=name, max_workers=max_workers, logger=logger)
+        # Reuse async implementation for the heavy lifting
+        inst = self.instantiate_component(module_or_class, target=target, engine=self, config=self.config)
 
-    # --- utilities ---
-    def status(self) -> Dict[str, Any]:
-        """Return a snapshot of engine status useful for health checks."""
-        return {
-            "name": self.name,
-            "running": bool(self._running),
-            "registered_tasks": list(self._tasks.keys()),
-            "tasks_count": len(self._tasks),
-            "max_workers": self.max_workers,
-            "uptime": (time.time() - self._start_time) if self._start_time else None,
-            "version": self.version,
-        }
+        entry = None
+        if hasattr(inst, "run") and callable(getattr(inst, "run")):
+            entry = getattr(inst, "run")
+        elif hasattr(inst, "main") and callable(getattr(inst, "main")):
+            entry = getattr(inst, "main")
+        elif callable(inst):
+            entry = inst
 
-    @classmethod
-    def get_version(cls) -> str:
-        """Return the engine implementation version."""
-        return cls.version
+        if entry is None:
+            raise ValueError("Module/Scanner has no callable entrypoint (run/main/callable)")
 
-    # --- context manager support ---
-    def __enter__(self) -> "Engine":
-        self.start()
-        return self
+        result = entry(*args, **kwargs)
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        # Attempt a graceful stop; allow exceptions to propagate
-        self.stop()
+        # If the result is an awaitable, decide how to run it depending on loop state
+        if inspect.isawaitable(result):
+            try:
+                # If there's a running loop, return a Task (caller should await it)
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop: run to completion and return final value
+                return asyncio.run(result)
+            else:
+                # Running loop: schedule and return Task
+                return loop.create_task(result)
+
+        return result
 
 
-# Backwards compatible alias
-RedHawkEngine = Engine
+# Export a small convenience singleton if desired
+_default_engine: Optional[Engine] = None
+
+
+def get_default_engine(config: Optional[dict] = None) -> Engine:
+    global _default_engine
+    if _default_engine is None:
+        _default_engine = Engine(config=config)
+    return _default_engine
