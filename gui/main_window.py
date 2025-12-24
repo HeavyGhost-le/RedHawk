@@ -1,4 +1,3 @@
-"""
 """ 
 Main GUI for RedHawk Framework
 Lightweight, responsive interface using tkinter
