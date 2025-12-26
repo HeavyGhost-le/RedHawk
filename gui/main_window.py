@@ -54,9 +54,17 @@ class _EngineFallback:
     def get_available_modules(self):
         try:
             if self.real and hasattr(self.real, 'get_available_modules'):
-                return list(self.real.get_available_modules())
+                modules = self.real.get_available_modules()
+                # Handle both list and dict
+                if isinstance(modules, dict):
+                    return list(modules.keys())
+                return list(modules)
             if self.real and hasattr(self.real, 'discover_modules'):
-                return list(self.real.discover_modules())
+                modules = self.real.discover_modules()
+                # Handle both list and dict
+                if isinstance(modules, dict):
+                    return list(modules.keys())
+                return list(modules)
             if self.real and hasattr(self.real, '_tasks'):
                 return list(self.real._tasks.keys())
         except Exception:
@@ -185,15 +193,24 @@ class RedHawkGUI:
         try:
             if self.engine is None:
                 return []
-            # Preferred API
+            # Preferred API - discover_modules (may return dict or list)
+            if hasattr(self.engine, 'discover_modules'):
+                discovered = self.engine.discover_modules()
+                # If it's a dict, get the keys
+                if isinstance(discovered, dict):
+                    return list(discovered.keys())
+                # If it's a list or other iterable
+                return list(discovered)
+            # get_available_modules API
             if hasattr(self.engine, 'get_available_modules'):
-                return list(self.engine.get_available_modules())
+                modules = self.engine.get_available_modules()
+                # Handle both list and dict returns
+                if isinstance(modules, dict):
+                    return list(modules.keys())
+                return list(modules)
             # older semantic: _tasks registry
             if hasattr(self.engine, '_tasks'):
                 return list(self.engine._tasks.keys())
-            # discover_modules
-            if hasattr(self.engine, 'discover_modules'):
-                return list(self.engine.discover_modules())
         except Exception:
             traceback.print_exc()
         return []
@@ -438,6 +455,7 @@ class RedHawkGUI:
                     try:
                         results = self.engine.run_all_modules(target, callback=self._scan_callback)
                     except TypeError:
+                        # callback not supported - we'll invoke it ourselves
                         results = self.engine.run_all_modules(target)
                 # If engine supports run_modules (list of modules)
                 elif hasattr(self.engine, 'run_modules'):
@@ -481,6 +499,16 @@ class RedHawkGUI:
                             results = {'status': 'error', 'error': str(e)}
                     else:
                         results = {'error': 'No runnable engine API found'}
+                
+                # Normalize results to dict[module_name -> result_dict]
+                results = self._normalize_results(results)
+                
+                # If engine didn't support callbacks, invoke them now
+                for module_name, result in results.items():
+                    try:
+                        self._scan_callback(module_name, result)
+                    except Exception:
+                        pass  # callback is optional
 
             self.current_results = results
             self.root.after(0, self._scan_complete, results)
@@ -601,6 +629,40 @@ class RedHawkGUI:
         }
 
     # ---------------------- Added helper methods ----------------------
+    def _normalize_results(self, results):
+        """Normalize results into a dict[module_name -> result_dict] format.
+        
+        Handles various result formats from different engine versions.
+        """
+        if not results:
+            return {}
+        
+        # If results is already a dict with module names as keys, check if values are dicts
+        if isinstance(results, dict):
+            normalized = {}
+            for key, value in results.items():
+                if isinstance(value, dict):
+                    # Already in the right format
+                    normalized[key] = value
+                else:
+                    # Wrap in a dict
+                    normalized[key] = {'status': 'success', 'result': value}
+            return normalized
+        
+        # If results is a list, convert to dict
+        if isinstance(results, list):
+            normalized = {}
+            for i, item in enumerate(results):
+                if isinstance(item, dict) and 'module' in item:
+                    module_name = item['module']
+                    normalized[module_name] = item
+                else:
+                    normalized[f'result_{i}'] = {'status': 'success', 'result': item}
+            return normalized
+        
+        # Fallback: single result
+        return {'result': {'status': 'success', 'result': results}}
+    
     def stop_scan(self):
         """Stop the current scan if running"""
         if not self.is_scanning:
