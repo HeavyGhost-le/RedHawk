@@ -656,7 +656,9 @@ class RedHawkGUI:
                     module_name = item['module']
                     normalized[module_name] = item
                 else:
-                    normalized[f'result_{i}'] = {'status': 'success', 'result': item}
+                    # Use unique prefix to avoid conflicts with actual module names
+                    key = f'_fallback_result_{i}'
+                    normalized[key] = {'status': 'success', 'result': item}
             return normalized
         
         # Fallback: single result

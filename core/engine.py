@@ -197,9 +197,13 @@ class Engine:
             # Load module dynamically
             spec = importlib.util.spec_from_file_location(module_name, module_path)
             if spec is None or spec.loader is None:
-                raise ImportError(f"Cannot load module from {module_path}")
+                raise ImportError(
+                    f"Cannot load module '{module_name}' from {module_path}. "
+                    f"Check file exists and is valid Python."
+                )
             
             module = importlib.util.module_from_spec(spec)
+            # Add to sys.modules for import resolution (intentional for caching)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
             
@@ -209,6 +213,9 @@ class Engine:
             
             return module
         except Exception as e:
+            # Clean up sys.modules on failure to prevent namespace pollution
+            if module_name in sys.modules:
+                del sys.modules[module_name]
             self._logger.error(f"Error loading module {module_name}: {e}")
             raise
     
@@ -253,30 +260,27 @@ class Engine:
         Tries to inject engine, target, and config parameters based on
         what the class constructor accepts.
         """
+        sig = inspect.signature(cls.__init__)
+        params = sig.parameters
+        
+        kwargs = {}
+        
+        # Check what parameters the class accepts
+        if 'target' in params:
+            kwargs['target'] = target
+        if 'config' in params:
+            kwargs['config'] = config
+        if 'engine' in params:
+            kwargs['engine'] = self
+        
         try:
-            sig = inspect.signature(cls.__init__)
-            params = sig.parameters
-            
-            kwargs = {}
-            
-            # Check what parameters the class accepts
-            if 'target' in params:
-                kwargs['target'] = target
-            if 'config' in params:
-                kwargs['config'] = config
-            if 'engine' in params:
-                kwargs['engine'] = self
-            
             instance = cls(**kwargs)
             self._logger.debug(f"Instantiated {cls.__name__} with {kwargs.keys()}")
             return instance
         except Exception as e:
-            self._logger.warning(f"Error instantiating {cls.__name__}: {e}, trying without args")
+            self._logger.warning(f"Error instantiating {cls.__name__} with {kwargs}: {e}, trying without args")
             # Fallback: try instantiating without args
-            try:
-                return cls()
-            except Exception:
-                raise
+            return cls()
     
     def _call_entrypoint(self, entrypoint: Any, target: str, config: Optional[Dict] = None, **kwargs) -> Any:
         """Call an entrypoint with intelligent parameter injection.
@@ -502,6 +506,10 @@ class Engine:
         
         Returns:
             Dictionary mapping module names to their results
+        
+        Note: If called from within an async context, this will schedule
+        execution but return immediately. Use await with run_modules_async
+        instead for async contexts.
         """
         async def _run_all():
             tasks = [
@@ -525,15 +533,22 @@ class Engine:
             
             return results
         
+        # Check if there's an existing event loop running
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Already in async context
-                return asyncio.create_task(_run_all())
+            loop = asyncio.get_running_loop()
+            # We're in an async context - warn and run in thread pool
+            self._logger.warning(
+                "run_modules called from async context - results may be delayed. "
+                "Consider using async/await pattern instead."
+            )
+            # Run in thread pool to avoid blocking
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, _run_all())
+                return future.result()
         except RuntimeError:
-            pass
-        
-        return asyncio.run(_run_all())
+            # No event loop, safe to create one
+            return asyncio.run(_run_all())
     
     def run_all_modules(
         self,
