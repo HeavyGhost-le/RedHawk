@@ -464,6 +464,122 @@ def _json_default(obj: Any) -> Any:
         return repr(obj)
 
 
+class RedHawkEngine:
+    """Backward-compatible class-based wrapper around the functional API.
+    
+    This class provides compatibility with code expecting a class-based Engine
+    while using the functional implementation underneath.
+    """
+    
+    def __init__(self, config_path: Optional[str] = None, **kwargs):
+        """Initialize the engine.
+        
+        Args:
+            config_path: Optional path to config file (currently unused)
+            **kwargs: Additional configuration options
+        """
+        self.config_path = config_path
+        self.config = kwargs
+        self.package = kwargs.get('package', 'modules')
+        self.modules_dir = kwargs.get('modules_dir', None)
+    
+    def discover_modules(self) -> Dict[str, str]:
+        """Discover available modules."""
+        return get_available_modules(self.package, self.modules_dir)
+    
+    def get_available_modules(self) -> Dict[str, str]:
+        """Alias for discover_modules()."""
+        return self.discover_modules()
+    
+    def run_module(self, module_name: str, target: Any = None, **kwargs) -> Dict[str, Any]:
+        """Run a single module synchronously.
+        
+        Args:
+            module_name: Name of the module to run
+            target: Target/entry point for the module
+            **kwargs: Additional arguments to pass to the module
+            
+        Returns:
+            Result dictionary with status and output
+        """
+        return run_module(
+            module_name,
+            target,
+            package=self.package,
+            modules_dir=self.modules_dir,
+            **kwargs
+        )
+    
+    async def run_module_async(self, module_name: str, target: Any = None, **kwargs) -> Dict[str, Any]:
+        """Run a single module asynchronously.
+        
+        Args:
+            module_name: Name of the module to run
+            target: Target/entry point for the module
+            **kwargs: Additional arguments to pass to the module
+            
+        Returns:
+            Result dictionary with status and output
+        """
+        return await run_module_async(
+            module_name,
+            target,
+            package=self.package,
+            modules_dir=self.modules_dir,
+            **kwargs
+        )
+    
+    def run_modules(self, module_names: List[str], target: Any = None, **kwargs) -> List[Dict[str, Any]]:
+        """Run multiple modules.
+        
+        Args:
+            module_names: List of module names to run
+            target: Target/entry point for the modules
+            **kwargs: Additional arguments to pass to the modules
+            
+        Returns:
+            List of result dictionaries
+        """
+        return run_modules(
+            module_names,
+            target,
+            package=self.package,
+            modules_dir=self.modules_dir,
+            **kwargs
+        )
+    
+    def run_all_modules(self, target: Any = None, **kwargs) -> List[Dict[str, Any]]:
+        """Run all discovered modules.
+        
+        Args:
+            target: Target/entry point for the modules
+            **kwargs: Additional arguments to pass to the modules
+            
+        Returns:
+            List of result dictionaries
+        """
+        return run_all_modules(
+            target,
+            package=self.package,
+            modules_dir=self.modules_dir,
+            **kwargs
+        )
+    
+    def save_results(self, results: Iterable[Dict[str, Any]], output_path: Optional[str] = None) -> Path:
+        """Save results to a JSON file.
+        
+        Args:
+            results: Results to save
+            output_path: Optional path to save to
+            
+        Returns:
+            Path to the saved file
+        """
+        if output_path is None:
+            output_path = "results.json"
+        return save_results(results, output_path)
+
+
 # Provide a simple CLI helper when executed as __main__ for quick local tests
 if __name__ == "__main__":
     import argparse
